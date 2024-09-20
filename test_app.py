@@ -1,47 +1,55 @@
-import pytest
-from app import app
+name: CI/CD Pipeline
 
-@pytest.fixture
-def client():
-    with app.test_client() as client:
-        yield client
+on:
+  push:
+    branches:
+      - session-1
+      - session-2
+  pull_request:
+    branches:
+      - main
 
-# Home route test
-def test_home(client):
-    response = client.get('/')
-    assert response.status_code == 200
-    assert response.json == {'version': '1.0'}
+jobs:
+  test:
+    runs-on: ubuntu-latest
 
-# Fahrenheit to Celsius
-@pytest.mark.parametrize("temp, expected", [(212, 100.0), (32, 0.0), (-40, -40.0)])
-def test_convert_temp_f_to_c(client, temp, expected):
-    response = client.get(f'/convert-temp?temp={temp}&scale=fahrenheit&target_scale=celsius')
-    assert response.status_code == 200
-    assert response.json['converted_temp'] == pytest.approx(expected, rel=1e-2)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-# Celsius to Fahrenheit
-@pytest.mark.parametrize("temp, expected", [(100, 212.0), (0, 32.0), (-40, -40.0)])
-def test_convert_temp_c_to_f(client, temp, expected):
-    response = client.get(f'/convert-temp?temp={temp}&scale=celsius&target_scale=fahrenheit')
-    assert response.status_code == 200
-    assert response.json['converted_temp'] == pytest.approx(expected, rel=1e-2)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'  
 
-# Kelvin to Celsius
-@pytest.mark.parametrize("temp, expected", [(273.15, 0.0), (373.15, 100.0), (233.15, -40.0)])
-def test_convert_temp_k_to_c(client, temp, expected):
-    response = client.get(f'/convert-temp?temp={temp}&scale=kelvin&target_scale=celsius')
-    assert response.status_code == 200
-    assert response.json['converted_temp'] == pytest.approx(expected, rel=1e-2)
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-# Kelvin to Fahrenheit
-@pytest.mark.parametrize("temp, expected", [(273.15, 32.0), (373.15, 212.0), (233.15, -40.0)])
-def test_convert_temp_k_to_f(client, temp, expected):
-    response = client.get(f'/convert-temp?temp={temp}&scale=kelvin&target_scale=fahrenheit')
-    assert response.status_code == 200
-    assert response.json['converted_temp'] == pytest.approx(expected, rel=1e-2)
+      - name: Run tests
+        run: |
+          pytest --maxfail=1 --disable-warnings
 
-# Invalid scale handling
-def test_convert_temp_invalid_scale(client):
-    response = client.get('/convert-temp?temp=100&scale=unknown&target_scale=celsius')
-    assert response.status_code == 400
-    assert 'error' in response.json
+  build_and_push:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/tech-trek:${{ github.sha }}
